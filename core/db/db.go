@@ -35,6 +35,7 @@ const stateCF = "stateCF"
 const stateDeltaCF = "stateDeltaCF"
 const indexesCF = "indexesCF"
 const persistCF = "persistCF"
+const statsCF = "statsCF"
 
 var columnfamilies = []string{
 	blockchainCF, // blocks of the block chain
@@ -42,6 +43,7 @@ var columnfamilies = []string{
 	stateDeltaCF, // open transaction state
 	indexesCF,    // tx uuid -> blockno
 	persistCF,    // persistent per-peer state (consensus)
+	statsCF, 	  // statistics for each chaincode on the peer
 }
 
 // OpenchainDB encapsulates rocksdb's structures
@@ -52,6 +54,7 @@ type OpenchainDB struct {
 	StateDeltaCF *gorocksdb.ColumnFamilyHandle
 	IndexesCF    *gorocksdb.ColumnFamilyHandle
 	PersistCF    *gorocksdb.ColumnFamilyHandle
+	StatsCF 	 *gorocksdb.ColumnFamilyHandle
 }
 
 var openchainDB *OpenchainDB
@@ -215,7 +218,7 @@ func openDB() (*OpenchainDB, error) {
 	}
 	isOpen = true
 	// XXX should we close cfHandlers[0]?
-	return &OpenchainDB{db, cfHandlers[1], cfHandlers[2], cfHandlers[3], cfHandlers[4], cfHandlers[5]}, nil
+	return &OpenchainDB{db, cfHandlers[1], cfHandlers[2], cfHandlers[3], cfHandlers[4], cfHandlers[5], cfHandlers[6]}, nil
 }
 
 // CloseDB releases all column family handles and closes rocksdb
@@ -225,6 +228,7 @@ func (openchainDB *OpenchainDB) CloseDB() {
 	openchainDB.StateDeltaCF.Destroy()
 	openchainDB.IndexesCF.Destroy()
 	openchainDB.PersistCF.Destroy()
+	openchainDB.StatsCF.Destroy()
 	openchainDB.DB.Close()
 	isOpen = false
 }

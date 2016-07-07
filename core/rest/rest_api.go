@@ -1713,6 +1713,16 @@ func (s *ServerOpenchainREST) GetPeers(rw web.ResponseWriter, req *web.Request) 
 	}
 }
 
+// GetStats returns a JSON object containing deploy, query, and invoke statistics for each chaincode on the peer
+func (s *ServerOpenchainREST) GetStats(rw web.ResponseWriter, req *web.Request) {
+	
+}
+
+// GetStatsByCCID returns a JSON object containing deploy, query, and invoke statistics for the specified chaincode
+func (s *ServerOpenchainREST) GetStatsByCCID(rw web.ResponseWriter, req *web.Request) {
+
+}
+
 // NotFound returns a custom landing page when a given hyperledger end point
 // had not been defined.
 func (s *ServerOpenchainREST) NotFound(rw web.ResponseWriter, r *web.Request) {
@@ -1748,6 +1758,12 @@ func buildOpenchainRESTRouter() *web.Router {
 	router.Get("/transactions/:uuid", (*ServerOpenchainREST).GetTransactionByUUID)
 
 	router.Get("/network/peers", (*ServerOpenchainREST).GetPeers)
+
+	// The /stats endpoint is used to retrieve stats on all chaincodes in the peer
+	router.Get("/stats", (*ServerOpenchainREST).GetStats)
+
+	// Alternatively, you can retrieve stats for a specific chaincode
+	router.Get("/stats/:ccid", (*ServerOpenchainREST).GetStatsByCCID)
 
 	// Add not found page
 	router.NotFound((*ServerOpenchainREST).NotFound)

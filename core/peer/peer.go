@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"strconv"
 
 	"golang.org/x/net/context"
 
@@ -631,6 +632,7 @@ func (p *PeerImpl) handleChat(ctx context.Context, stream ChatStream, initiatedS
 func (p *PeerImpl) ExecuteTransaction(transaction *pb.Transaction) (response *pb.Response) {
 	if p.isValidator {
 		response = p.sendTransactionsToLocalEngine(transaction)
+		p.recordTransactionStats(transaction, response)
 	} else {
 		peerAddresses := p.discHelper.GetRandomNodes(1)
 		response = p.SendTransactionsToPeer(peerAddresses[0], transaction)
@@ -839,6 +841,197 @@ func (p *PeerImpl) Store(key string, value []byte) error {
 func (p *PeerImpl) Load(key string) ([]byte, error) {
 	db := db.GetDBHandle()
 	return db.Get(db.PersistCF, []byte(key))
+}
+
+// =============================================================================
+// Statistics
+// =============================================================================
+
+// StoreStat enables a peer to store a key-value pair to the statistics column in the database
+func (p *PeerImpl) StoreStat(key string, value []byte) error {
+	db := db.GetDBHandle()
+	return db.Put(db.StatsCF, []byte(key), value)
+}
+
+// LoadStat enables a peer to read a value that corresponds to a given key in the statistics database column
+func (p *PeerImpl) LoadStat(key string) ([]byte, error) {
+	db := db.GetDBHandle()
+	return db.Get(db.StatsCF, []byte(key))
+}
+
+/**
+ * Records statistics about a transaction and its response
+ * Updates deploy, invoke, and query stats
+ * Currently, a "failed" invoke only means an invoke which failed to broadcast a consensus message,
+ * NOT an invoke which failed due to chaincode failure. This is because the sendTransactionsToLocalEngine
+ * does not actually run when the chaincode runs. When the transaction system is finalized, the stats may
+ * need to be updated to reflect failed invokes on a chaincode level.
+ */
+func (p *PeerImpl) recordTransactionStats(tx *pb.Transaction, resp *pb.Response) {
+	// Define our variables
+	var ccSpec 	*pb.ChaincodeSpec	// Chaincode spec for the transaction
+	var cMsg 	*pb.ChaincodeInput	// Constructor message
+	var ccID 	*pb.ChaincodeID		// Chaincode ID struct to retrieve path or mame 
+	var fcn		*string 			// Contains the name of the chaincode function called
+	var args 	[]string 			// Array of arguments to the chaincode function
+
+	// Extract the chaincode spec depending on the transaction type
+	switch tx.Type {
+		case pb.Transaction_CHAINCODE_DEPLOY:
+			ccDeploySpec := &pb.ChaincodeDeploymentSpec{}
+			if err := proto.Unmarshal(tx.Payload, ccDeploySpec); err != nil {
+				peerLogger.Errorf("[STATS] Failed unmarshalling deploy payload: %s", err)
+			}
+			ccSpec = ccDeploySpec.ChaincodeSpec
+
+		case pb.Transaction_CHAINCODE_INVOKE, pb.Transaction_CHAINCODE_QUERY:
+			ccInvokeSpec := &pb.ChaincodeInvocationSpec{}
+			if err := proto.Unmarshal(tx.Payload, ccInvokeSpec); err != nil {
+				peerLogger.Errorf("[STATS] Failed unmarshalling invoke payload: %s", err)
+			}
+			ccSpec = ccInvokeSpec.ChaincodeSpec
+
+		default:
+			peerLogger.Errorf("[STATS] Did not recognize transaction type")
+			return
+	}
+
+	// Get the constructor message
+	cMsg = ccSpec.CtorMsg
+	ccID = ccSpec.ChaincodeID
+
+	// Extract the function and arguments of the event
+	fcn = &cMsg.Function
+	args = cMsg.Args
+
+	peerLogger.Errorf("[STATS] Recording statistics for chaincode %s", ccID.Name)
+
+	// Process deploy statistics only if deploy was successful
+	if (tx.Type == pb.Transaction_CHAINCODE_DEPLOY) && (resp.Status == pb.Response_SUCCESS) {
+		deployTimeKey := ccID.Name + "_deployTime"
+		deployTimeVal := strconv.FormatInt(int64(time.Now().Unix()), 10)
+
+		deployPathKey := ccID.Name + "_deployPath"
+		deployPathVal := ccID.Path
+
+		deployFuncKey := ccID.Name + "_deployFunc"
+		deployFuncVal := *fcn
+
+		deployArgsKey := ccID.Name + "_deployArgs"
+		deployArgsVal := strings.Join(args[:],",")
+
+		// Store our deploy stats
+		if err := p.StoreStat(deployTimeKey, []byte(deployTimeVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record deploy time: %s", err)
+		}
+		if err := p.StoreStat(deployPathKey, []byte(deployPathVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record deploy path: %s", err)
+		}
+		if err := p.StoreStat(deployFuncKey, []byte(deployFuncVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record deploy function: %s", err)
+		}
+		if err := p.StoreStat(deployArgsKey, []byte(deployArgsVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record deploy arguments: %s", err)
+		}
+	} else if tx.Type == pb.Transaction_CHAINCODE_INVOKE {
+		// Process invoke statistics for both failed and successful invocations
+		var invokeNumKey	string
+		var invokeNumVal	string
+		var invokeTimeKey	string
+		var invokeTimeVal	string
+
+		// The timestamp is the same regardless of success or failure
+		invokeTimeVal = strconv.FormatInt(int64(time.Now().Unix()), 10)
+
+		// Define our keys depending on whether the invoke was a success or a failure
+		if (resp.Status == pb.Response_SUCCESS) {
+			invokeNumKey = ccID.Name + "_noSuccessfulInvokes"
+			invokeTimeKey = ccID.Name + "_lastSuccessfulInvoke"
+		} else {
+			invokeNumKey = ccID.Name + "_noFailedInvokes"
+			invokeTimeKey = ccID.Name + "_lastFailedInvoke"
+		}
+
+		// Retrieve previous number of invokes
+		val, err := p.Load(invokeNumKey)
+
+		if err != nil {
+			peerLogger.Errorf("[STATS] Could not retrieve previous number of invokes: %s", err)
+		}
+
+		// If there was no previous invokes, start at 1, otherwise add 1 to previous value
+		if val == nil {
+			invokeNumVal = "1"
+		} else {
+			valStr := string(val[:])
+			newNum, err := strconv.ParseInt(valStr, 10, 64)
+
+			if err != nil {
+				peerLogger.Errorf("[STATS] Unable to read invoke number from database, defaulting to invoke #1: %s", err)
+				invokeNumVal = "1'"
+			} else {
+				newNum = newNum + 1
+				invokeNumVal = strconv.FormatInt(newNum, 10)
+			}
+		}
+
+		// Store our invocation stats
+		if err := p.StoreStat(invokeNumKey, []byte(invokeNumVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record number of successful invokes: %s", err)
+		}
+		if err := p.StoreStat(invokeTimeKey, []byte(invokeTimeVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record timestamp for successful invoke: %s", err)
+		}
+	} else if tx.Type == pb.Transaction_CHAINCODE_QUERY {
+		// Process invoke statistics for both failed and successful invocations
+		var queryNumKey		string
+		var queryNumVal		string
+		var queryTimeKey	string
+		var queryTimeVal	string
+
+		// The timestamp is the same regardless of success or failure
+		queryTimeVal = strconv.FormatInt(int64(time.Now().Unix()), 10)
+
+		// Define our keys depending on whether the query was a success or a failure
+		if (resp.Status == pb.Response_SUCCESS) {
+			queryNumKey = ccID.Name + "_noSuccessfulQueries"
+			queryTimeKey = ccID.Name + "_lastSuccessfulQuery"
+		} else {
+			queryNumKey = ccID.Name + "_noFailedQueries"
+			queryTimeKey = ccID.Name + "_lastFailedQueries"
+		}
+
+		// Retrieve previous number of queries
+		val, err := p.Load(queryNumKey)
+
+		if err != nil {
+			peerLogger.Errorf("[STATS] Could not retrieve previous number of queries: %s", err)
+		}
+
+		// If there were no previous queries, start at 1, otherwise add 1 to previous value
+		if val == nil {
+			queryNumVal = "1"
+		} else {
+			valStr := string(val[:])
+			newNum, err := strconv.ParseInt(valStr, 10, 64)
+
+			if err != nil {
+				peerLogger.Errorf("[STATS] Unable to read query number from database, defaulting to query #1: %s", err)
+				queryNumVal = "1'"
+			} else {
+				newNum = newNum + 1
+				queryNumVal = strconv.FormatInt(newNum, 10)
+			}
+		}
+
+		// Store our invocation stats
+		if err := p.StoreStat(queryNumKey, []byte(queryNumVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record number of successful querys: %s", err)
+		}
+		if err := p.StoreStat(queryTimeKey, []byte(queryTimeVal)); err != nil {
+			peerLogger.Errorf("[STATS] Failed to record timestamp for successful query: %s", err)
+		}
+	}
 }
 
 // =============================================================================

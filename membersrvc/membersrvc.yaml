@@ -90,6 +90,8 @@ eca:
                 jim: 1 6avZQLwcUe9b bank_a 00004
                 binhn: 1 7avZQLwcUe9q institution_a 00005
 
+                ajp: 1 trainisland institution_a 00001 '{"registrar":{"roles":["client","peer","validator","auditor"],"delegateRoles":["client","peer","validator","auditor"]}}'
+
                 # Users for asset transfer with roles test located at
                 # sdk/node/test/unit/asset-mgmt-with-roles.js
                 alice: 1 CMS10pEQlB16 bank_a 00006
