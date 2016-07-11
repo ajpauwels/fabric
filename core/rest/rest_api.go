@@ -1770,10 +1770,10 @@ func buildOpenchainRESTRouter() *web.Router {
 	router.Get("/network/peers", (*ServerOpenchainREST).GetPeers)
 
 	// The /stats endpoint is used to retrieve stats on all chaincodes in the peer
-	router.Post("/stats", (*ServerOpenchainREST).GetStats)
+	router.Get("/stats", (*ServerOpenchainREST).GetStats)
 
 	// Alternatively, you can retrieve stats for a specific chaincode
-	router.Post("/stats/:ccid", (*ServerOpenchainREST).GetStatsByCCID)
+	router.Get("/stats/:ccid", (*ServerOpenchainREST).GetStatsByCCID)
 
 	// Add not found page
 	router.NotFound((*ServerOpenchainREST).NotFound)
