@@ -190,7 +190,6 @@ func (h *Helper) ExecTxs(id interface{}, txs []*pb.Transaction) ([]byte, error) 
 	for i, e := range txerrs {
 		//NOTE- it'll be nice if we can have error values. For now success == 0, error == 1
 		if txerrs[i] != nil {
-			logger.Errorf("[ALEX] There was an error: %s", e.Error())
 			txresults[i] = &pb.TransactionResult{Uuid: txs[i].Uuid, Error: e.Error(), ErrorCode: 1, ChaincodeEvent: ccevents[i]}
 		} else {
 			txresults[i] = &pb.TransactionResult{Uuid: txs[i].Uuid, ChaincodeEvent: ccevents[i]}

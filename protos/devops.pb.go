@@ -309,7 +309,6 @@ func _Devops_Build_Handler(srv interface{}, ctx context.Context, dec func(interf
 }
 
 func _Devops_Deploy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error) (interface{}, error) {
-	logger.Errorf("[DEVOPSDEPLOY] We're here")
 	in := new(ChaincodeSpec)
 	if err := dec(in); err != nil {
 		return nil, err

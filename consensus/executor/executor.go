@@ -157,7 +157,6 @@ func (co *coordinatorImpl) Commit(tag interface{}, metadata []byte) {
 
 // Execute adds additional executions to the current batch
 func (co *coordinatorImpl) Execute(tag interface{}, txs []*pb.Transaction) {
-	logger.Errorf("EXECUTING HERE 123")
 	co.manager.Queue() <- executeEvent{tag, txs}
 }
 
