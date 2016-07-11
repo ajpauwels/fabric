@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 	"strconv"
+	"encoding/json"
 
 	"golang.org/x/net/context"
 
@@ -49,6 +50,7 @@ import (
 type Peer interface {
 	GetPeerEndpoint() (*pb.PeerEndpoint, error)
 	NewOpenchainDiscoveryHello() (*pb.Message, error)
+	GetStats() (*pb.Response, error)
 }
 
 // BlocksRetriever interface for retrieving blocks .
@@ -847,6 +849,36 @@ func (p *PeerImpl) Load(key string) ([]byte, error) {
 // Statistics
 // =============================================================================
 
+// Stores the deploy input portion of the chaincode stats
+type ChaincodeInputStats struct {
+	Function string `json:"function"`
+	Args []string `json:"args"`
+}
+
+// Stores statistics associated with a particular chaincode
+type ChaincodeStats struct {
+	SuccessfulInvokes uint32 `json:"noSuccessfulInvokes,omitempty"`
+	FailedInvokes uint32 `json:"noFailedInvokes,omitempty"`
+
+	LastSuccessfulInvoke string `json:"lastSuccessfulInvoke,omitempty"`
+	LastFailedInvoke string `json:"lastFailedInvoke,omitempty"`
+
+	SuccessfulQueries uint32 `json:"noSuccessfulQueries,omitempty"`
+	FailedQueries uint32 `json:"noFailedQueries,omitempty"`
+
+	LastSuccessfulQuery string `json:"lastSuccessfulQuery,omitempty"`
+	LastFailedQuery string `json:"lastFailedQuery,omitempty"`
+
+	DeployPath string `json:"path"`
+	DeployedOn string `json:"deployed"`
+	Inputs ChaincodeInputStats `json:"input"`
+}
+
+// Stores all statistics for all chaincodes on the peer
+type PeerStats struct {
+	Chaincodes map[string]*ChaincodeStats `json:"chaincodes"`
+}
+
 // StoreStat enables a peer to store a key-value pair to the statistics column in the database
 func (p *PeerImpl) StoreStat(key string, value []byte) error {
 	db := db.GetDBHandle()
@@ -857,6 +889,100 @@ func (p *PeerImpl) StoreStat(key string, value []byte) error {
 func (p *PeerImpl) LoadStat(key string) ([]byte, error) {
 	db := db.GetDBHandle()
 	return db.Get(db.StatsCF, []byte(key))
+}
+
+// Retrieves the statistics for all chaincodes on the peer
+func (p *PeerImpl) GetStats() (*pb.Response, error) {
+	// Map stores whether or not we've encountered a chaincode as we iterate through the stats
+	peerStats := &PeerStats{}
+	ccMap := make(map[string]*ChaincodeStats)
+
+	// Get the database
+	db := db.GetDBHandle()
+
+	// Get the iterator for the stats column family and defer closing the connection
+	it := db.GetIterator(db.StatsCF)
+	defer it.Close()
+
+	// Iterate through all key-value pairs in the column
+	it.SeekToFirst()
+	for it = it; it.Valid(); it.Next() {
+		// Key and value extraction and conversion
+		key := it.Key()
+		value := it.Value()
+		keyArr := strings.Split(string(key.Data()[:]), "_")
+
+		ccID := keyArr[0]
+		statType := keyArr[1]
+
+		// If we've already encountered this chaincode, grab the struct, otherwise create a new one
+		var ccStat *ChaincodeStats
+		var ok bool
+		if ccStat, ok = ccMap[ccID]; !ok {
+			ccStat = &ChaincodeStats{}
+			ccMap[ccID] = ccStat
+		}
+
+		// Store the retrieved stats in the chaincode struct
+		p.storeValInStatsStruct(statType, string(value.Data()[:]), ccStat)
+
+		key.Free()
+		value.Free()
+	}
+
+	peerStats.Chaincodes = ccMap
+	statsString, err := json.Marshal(peerStats)
+	if err != nil {
+		peerLogger.Errorf("[STATS] Could not marshal stats: %s", err.Error())
+		return nil, err
+	}
+
+	return &pb.Response{ Status: pb.Response_SUCCESS, Msg: statsString }, nil
+}
+
+// Takes in a database key and value and stores it in a ChaincodeStats struct
+func (p *PeerImpl) storeValInStatsStruct(key string, val string, stats *ChaincodeStats) {
+	switch key {
+		case "deployTime":
+			stats.DeployedOn = val
+
+		case "deployPath":
+			stats.DeployPath = val
+
+		case "deployFunc":
+			stats.Inputs.Function = val
+
+		case "deployArgs":
+			stats.Inputs.Args = strings.Split(val, ",")
+
+		case "noSuccessfulInvokes":
+			no, _ := strconv.ParseUint(val, 10, 32)
+			stats.SuccessfulInvokes = uint32(no)
+
+		case "noFailedInvokes":
+			no, _ := strconv.ParseUint(val, 10, 32)
+			stats.FailedInvokes = uint32(no)
+
+		case "noSuccessfulQueries":
+			no, _ := strconv.ParseUint(val, 10, 32)
+			stats.SuccessfulQueries = uint32(no)
+
+		case "noFailedQueries":
+			no, _ := strconv.ParseUint(val, 10, 32)
+			stats.FailedQueries = uint32(no)
+
+		case "lastSuccessfulInvoke":
+			stats.LastSuccessfulInvoke = val
+
+		case "lastFailedInvoke":
+			stats.LastFailedInvoke = val
+
+		case "lastSuccessfulQuery":
+			stats.LastSuccessfulQuery = val
+
+		case "lastFailedQuery":
+			stats.LastFailedQuery = val
+	}
 }
 
 /**
@@ -900,11 +1026,20 @@ func (p *PeerImpl) recordTransactionStats(tx *pb.Transaction, resp *pb.Response)
 	cMsg = ccSpec.CtorMsg
 	ccID = ccSpec.ChaincodeID
 
+	// If this transaction is not a deploy and the requested chaincode hasn't been deployed, don't store anything
+	if (tx.Type == pb.Transaction_CHAINCODE_INVOKE) || (tx.Type == pb.Transaction_CHAINCODE_QUERY) {
+		val, _ := p.LoadStat(ccID.Name + "_deployTime")
+
+		if val == nil {
+			return
+		}
+	}
+
 	// Extract the function and arguments of the event
 	fcn = &cMsg.Function
 	args = cMsg.Args
 
-	peerLogger.Errorf("[STATS] Recording statistics for chaincode %s", ccID.Name)
+	peerLogger.Debugf("[STATS] Recording statistics for chaincode %s", ccID.Name)
 
 	// Process deploy statistics only if deploy was successful
 	if (tx.Type == pb.Transaction_CHAINCODE_DEPLOY) && (resp.Status == pb.Response_SUCCESS) {
@@ -953,7 +1088,7 @@ func (p *PeerImpl) recordTransactionStats(tx *pb.Transaction, resp *pb.Response)
 		}
 
 		// Retrieve previous number of invokes
-		val, err := p.Load(invokeNumKey)
+		val, err := p.LoadStat(invokeNumKey)
 
 		if err != nil {
 			peerLogger.Errorf("[STATS] Could not retrieve previous number of invokes: %s", err)
@@ -983,7 +1118,7 @@ func (p *PeerImpl) recordTransactionStats(tx *pb.Transaction, resp *pb.Response)
 			peerLogger.Errorf("[STATS] Failed to record timestamp for successful invoke: %s", err)
 		}
 	} else if tx.Type == pb.Transaction_CHAINCODE_QUERY {
-		// Process invoke statistics for both failed and successful invocations
+		// Process query statistics for both failed and successful queries
 		var queryNumKey		string
 		var queryNumVal		string
 		var queryTimeKey	string
@@ -998,11 +1133,11 @@ func (p *PeerImpl) recordTransactionStats(tx *pb.Transaction, resp *pb.Response)
 			queryTimeKey = ccID.Name + "_lastSuccessfulQuery"
 		} else {
 			queryNumKey = ccID.Name + "_noFailedQueries"
-			queryTimeKey = ccID.Name + "_lastFailedQueries"
+			queryTimeKey = ccID.Name + "_lastFailedQuery"
 		}
 
 		// Retrieve previous number of queries
-		val, err := p.Load(queryNumKey)
+		val, err := p.LoadStat(queryNumKey)
 
 		if err != nil {
 			peerLogger.Errorf("[STATS] Could not retrieve previous number of queries: %s", err)
@@ -1024,7 +1159,7 @@ func (p *PeerImpl) recordTransactionStats(tx *pb.Transaction, resp *pb.Response)
 			}
 		}
 
-		// Store our invocation stats
+		// Store our query stats
 		if err := p.StoreStat(queryNumKey, []byte(queryNumVal)); err != nil {
 			peerLogger.Errorf("[STATS] Failed to record number of successful querys: %s", err)
 		}

@@ -304,6 +304,11 @@ func (d *Devops) Query(ctx context.Context, chaincodeInvocationSpec *pb.Chaincod
 	return d.invokeOrQuery(ctx, chaincodeInvocationSpec, chaincodeInvocationSpec.ChaincodeSpec.Attributes, false)
 }
 
+// Retrieves statistics about all chaincodes on the peer
+func (d *Devops) GetPeerStats() (*pb.Response, error) {
+	return d.coord.GetStats()
+}
+
 // CheckSpec to see if chaincode resides within current package capture for language.
 func CheckSpec(spec *pb.ChaincodeSpec) error {
 	// Don't allow nil value

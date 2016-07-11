@@ -266,6 +266,8 @@ type DevopsServer interface {
 	Invoke(context.Context, *ChaincodeInvocationSpec) (*Response, error)
 	// Invoke chaincode.
 	Query(context.Context, *ChaincodeInvocationSpec) (*Response, error)
+	// Retrieves statistics information about all chaincode on the peer
+	GetPeerStats() (*Response, error)
 	// Request a TransactionResult.  The Response.Msg will contain the TransactionResult if successfully found the transaction in the chain.
 	GetTransactionResult(context.Context, *TransactionRequest) (*Response, error)
 	// Retrieve a TCert.
@@ -307,6 +309,7 @@ func _Devops_Build_Handler(srv interface{}, ctx context.Context, dec func(interf
 }
 
 func _Devops_Deploy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error) (interface{}, error) {
+	logger.Errorf("[DEVOPSDEPLOY] We're here")
 	in := new(ChaincodeSpec)
 	if err := dec(in); err != nil {
 		return nil, err

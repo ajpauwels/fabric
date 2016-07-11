@@ -1715,7 +1715,17 @@ func (s *ServerOpenchainREST) GetPeers(rw web.ResponseWriter, req *web.Request) 
 
 // GetStats returns a JSON object containing deploy, query, and invoke statistics for each chaincode on the peer
 func (s *ServerOpenchainREST) GetStats(rw web.ResponseWriter, req *web.Request) {
-	
+	res, err := s.devops.GetPeerStats()
+
+	if err != nil {
+		restLogger.Errorf("Error retrieving statistics: %s", err)
+
+		rw.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(rw, err.Error())
+	} else {
+		rw.WriteHeader(http.StatusOK)
+		fmt.Fprintf(rw, string(res.Msg[:]))
+	}
 }
 
 // GetStatsByCCID returns a JSON object containing deploy, query, and invoke statistics for the specified chaincode
@@ -1760,10 +1770,10 @@ func buildOpenchainRESTRouter() *web.Router {
 	router.Get("/network/peers", (*ServerOpenchainREST).GetPeers)
 
 	// The /stats endpoint is used to retrieve stats on all chaincodes in the peer
-	router.Get("/stats", (*ServerOpenchainREST).GetStats)
+	router.Post("/stats", (*ServerOpenchainREST).GetStats)
 
 	// Alternatively, you can retrieve stats for a specific chaincode
-	router.Get("/stats/:ccid", (*ServerOpenchainREST).GetStatsByCCID)
+	router.Post("/stats/:ccid", (*ServerOpenchainREST).GetStatsByCCID)
 
 	// Add not found page
 	router.NotFound((*ServerOpenchainREST).NotFound)
