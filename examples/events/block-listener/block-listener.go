@@ -71,8 +71,13 @@ func createEventClient(eventAddress string) *adapter {
 }
 
 func main() {
+	// For processing a transaction
+	var ccSpec *pb.ChaincodeSpec
+	var cMsg *pb.ChaincodeInput
+	var ccID *pb.ChaincodeID
+
 	var eventAddress string
-	flag.StringVar(&eventAddress, "events-address", "0.0.0.0:31315", "address of events server")
+	flag.StringVar(&eventAddress, "events-address", "172.17.0.2:31315", "address of events server")
 	flag.Parse()
 
 	fmt.Printf("Event Address: %s\n", eventAddress)
@@ -90,13 +95,28 @@ func main() {
 		} else {
 			fmt.Printf("Received block\n")
 			fmt.Printf("--------------\n")
-			for _, r := range b.Block.NonHashData.TransactionResults {
-				if r.ErrorCode != 0 {
-					fmt.Printf("Err Transaction:\n\t[%v]\n", r)
-				} else {
-					fmt.Printf("Success Transaction:\n\t[%v]\n", r)
+//			for _, r := range b.Block.NonHashData.TransactionResults {
+//				if r.ErrorCode != 0 {
+//					fmt.Printf("Err Transaction:\n\t[%v]\n", r)
+//				} else {
+//					fmt.Printf("Success Transaction:\n\t[%v]\n", r)
+//				}
+//			}
+
+			for _, tx := range b.Block.Transactions {
+				if tx.Type == pb.Transaction_CHAINCODE_INVOKE {
+					ccInvokeSpec := &pb.ChaincodeInvocationSpec{}
+					if err := proto.Unmarshal(tx.Payload, ccInvokeSpec); err != nil {
+						fmt.Printf("[ERROR] Could not unmarshal the invocation payload: %s", err.Error())
+					} else {
+						ccSpec = ccInvokeSpec.ChaincodeSpec
+
+						cMsg = ccSpec.CtorMsg
+						ccID = ccSpec.ChaincodeID
+					}
 				}
 			}
 		}
+		
 	}
 }
