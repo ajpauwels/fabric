@@ -39,6 +39,9 @@ service Devops {
     // Invoke chaincode.
     rpc Query(ChaincodeInvocationSpec) returns (Response) {}
 
+    // Retrieves statistics information about all chaincode on the peer
+    rpc GetPeerStats() returns (*Response, error) {}
+
     // Request a TransactionResult.  The Response.Msg will contain the TransactionResult if successfully found the transaction in the chain.
     rpc GetTransactionResult(TransactionRequest) returns (Response) {}
 

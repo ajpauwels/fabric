@@ -23,8 +23,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"bytes"
+	"net/http"
 
 	"github.com/hyperledger/fabric/events/consumer"
+	"github.com/golang/protobuf/proto"
 	pb "github.com/hyperledger/fabric/protos"
 )
 
@@ -74,7 +77,7 @@ func main() {
 	// For processing a transaction
 	var ccSpec *pb.ChaincodeSpec
 	var cMsg *pb.ChaincodeInput
-	var ccID *pb.ChaincodeID
+	//var ccID *pb.ChaincodeID
 
 	var eventAddress string
 	flag.StringVar(&eventAddress, "events-address", "172.17.0.2:31315", "address of events server")
@@ -111,8 +114,26 @@ func main() {
 					} else {
 						ccSpec = ccInvokeSpec.ChaincodeSpec
 
+						//ccID = ccSpec.ChaincodeID
 						cMsg = ccSpec.CtorMsg
-						ccID = ccSpec.ChaincodeID
+						args := cMsg.Args
+						
+						if cMsg.Function == "writeMsg" {
+							fmt.Printf("Message received for %s\n", args[3])	
+
+							url := "http://192.168.56.102:3000/api/recv"
+							reqStr := []byte(`{"receiver": "`+ args[3] + `"}`)
+							req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqStr))
+							req.Header.Set("Content-Type", "application/json")
+
+							client := &http.Client{}
+							resp, err := client.Do(req)
+							if err != nil {
+								fmt.Printf("Error sending receive event over HTTP: %s", err.Error())
+								panic(err)
+							}
+							resp.Body.Close()
+						}
 					}
 				}
 			}
